@@ -1,0 +1,23 @@
+# Builds and deploys FastAPI backend to Cloud Run
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build','-t','${_REGION}-docker.pkg.dev/$PROJECT_ID/manthan-repo/backend:${SHORT_SHA}','backend']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push','${_REGION}-docker.pkg.dev/$PROJECT_ID/manthan-repo/backend:${SHORT_SHA}']
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - manthan-backend
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/manthan-repo/backend:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --max-instances=3
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/manthan-repo/backend:${SHORT_SHA}'
+substitutions:
+  _REGION: asia-south1
+options:
+  logging: CLOUD_LOGGING_ONLY
