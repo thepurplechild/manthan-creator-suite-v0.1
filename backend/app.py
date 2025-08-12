@@ -11,12 +11,13 @@ from firebase_admin import auth as fb_auth
 app = FastAPI(title="Manthan Creator Suite API", version="0.2.0")
 
 # CORS for the browser
+ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "*")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],  # includes Authorization
+    allow_origins=[ALLOWED_ORIGIN],
+    allow_credentials=False,  # we're using Authorization header, not cookies
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # Firestore
