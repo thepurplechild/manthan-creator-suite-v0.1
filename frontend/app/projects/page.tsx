@@ -3,10 +3,9 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useAuth } from '../../components/auth'
 
-// Use env, but fall back to your real backend URL (paste yours below)
 const BACKEND =
   process.env.NEXT_PUBLIC_BACKEND_URL ||
-  'https://<PASTE-YOUR-manthan-backend-URL>.a.run.app'
+  'https://<YOUR-manthan-backend-URL>.a.run.app'
 
 type Project = { id: string; title: string; logline: string; genre?: string; tone?: string; creator_name?: string }
 
@@ -19,7 +18,10 @@ export default function Projects() {
     if (!user) return
     ;(async () => {
       try {
-        const res = await fetch(`${BACKEND}/api/projects`)
+        const token = await user.getIdToken()
+        const res = await fetch(`${BACKEND}/api/projects`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
         if (!res.ok) throw new Error(await res.text())
         setData(await res.json())
       } catch (e: any) {
