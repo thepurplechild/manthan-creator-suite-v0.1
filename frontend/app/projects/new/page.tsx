@@ -1,9 +1,14 @@
 'use client'
+import Link from 'next/link'
 import { useState } from 'react'
+import { useAuth } from '../../../components/auth'
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL
+const BACKEND =
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  'https://<YOUR-manthan-backend-URL>.a.run.app'
 
 export default function NewProject() {
+  const { user } = useAuth()
   const [title, setTitle] = useState('')
   const [logline, setLogline] = useState('')
   const [genre, setGenre] = useState('')
@@ -13,28 +18,47 @@ export default function NewProject() {
   const [err, setErr] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
+  if (!user) {
+    return (
+      <main className="space-y-6">
+        <h1 className="text-2xl font-semibold">New Project</h1>
+        <p className="opacity-80">
+          Please <Link href="/login" className="text-indigo-300 underline">sign in</Link> to create a project.
+        </p>
+      </main>
+    )
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setErr(null); setLoading(true)
     try {
+      const token = await user.getIdToken()
+
       // create project
       const res = await fetch(`${BACKEND}/api/projects`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, logline, genre, tone, creator_name: creatorName })
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ title, logline, genre, tone, creator_name: creatorName }),
       })
       if (!res.ok) throw new Error(await res.text())
 
       // generate pitch-pack
       const gen = await fetch(`${BACKEND}/api/pitch/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, logline, genre, tone })
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ title, logline, genre, tone }),
       })
       if (!gen.ok) throw new Error(await gen.text())
       const payload = await gen.json()
       setPitch(payload)
-    } catch (e:any) {
+    } catch (e: any) {
       setErr(e.message || 'Failed to create project')
     } finally {
       setLoading(false)
@@ -52,7 +76,9 @@ export default function NewProject() {
           <input className="px-4 py-3 rounded-xl bg-neutral-900 border border-neutral-800" placeholder="Tone (e.g., grounded, darkly comic)" value={tone} onChange={e=>setTone(e.target.value)} />
         </div>
         <input className="px-4 py-3 rounded-xl bg-neutral-900 border border-neutral-800" placeholder="Creator name (optional)" value={creatorName} onChange={e=>setCreatorName(e.target.value)} />
-        <button disabled={loading} className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50">{loading ? 'Creating…' : 'Create & Generate Pitch Pack'}</button>
+        <button disabled={loading} className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50">
+          {loading ? 'Creating…' : 'Create & Generate Pitch Pack'}
+        </button>
         {err && <p className="text-red-400">{err}</p>}
       </form>
 
