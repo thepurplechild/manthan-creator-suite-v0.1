@@ -1,3 +1,6 @@
+'use client'
+import React from 'react'
+
 type Variant = 'flow' | 'sharp' | 'mono'
 
 export function Logo({
@@ -6,12 +9,10 @@ export function Logo({
   variant = 'sharp', // change to 'flow' or 'mono' if you prefer
 }: { size?: number; label?: string; variant?: Variant }) {
   return (
-    <div className="flex items-center gap-2" aria-label={label}>
-      {variant === 'flow' && <FlowMark size={size} />}
-      {variant === 'sharp' && <SharpMark size={size} />}
-      {variant === 'mono' && <MonoMark size={size} />}
+    <span className="inline-flex items-center gap-2" aria-label={label}>
+      {variant === 'flow' ? <FlowMark size={size} /> : variant === 'mono' ? <MonoMark size={size} /> : <SharpMark size={size} />}
       <span className="font-display text-lg tracking-tight">Manthan</span>
-    </div>
+    </span>
   )
 }
 
@@ -47,7 +48,7 @@ function SharpMark({ size }: { size: number }) {
         </linearGradient>
       </defs>
       {/* Hexagon */}
-      <path d="M16 2 28 9.5 28 22.5 16 30 4 22.5 4 9.5 Z" fill="url(#manthanSharp)"/>
+      <path d="M16 2 28 9.5 28 22.5 16 30 4 22.5 4 9.5 Z" fill="url(#manthanSharp)" />
       {/* Angular M */}
       <path
         d="M7.8 22.2 L7.8 10.2 L12.6 18.0 L16.0 12.4 L19.4 18.0 L24.2 10.2 L24.2 22.2"
@@ -57,7 +58,7 @@ function SharpMark({ size }: { size: number }) {
   )
 }
 
-/** Mono: single-color circular badge + simple M */
+/** Mono: single-color circle + simple M */
 function MonoMark({ size }: { size: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true">
@@ -69,3 +70,4 @@ function MonoMark({ size }: { size: number }) {
     </svg>
   )
 }
+
