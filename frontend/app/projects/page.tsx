@@ -23,7 +23,7 @@ export default function Projects() {
         if (!res.ok) throw new Error(await res.text())
         setData(await res.json())
       } catch (e: any) {
-        setErr(e.message || 'Failed to load projects')
+        setErr(e.message || 'Failed to fetch')
       }
     })()
   }, [user])
@@ -32,7 +32,9 @@ export default function Projects() {
     return (
       <main className="space-y-6">
         <h1 className="text-2xl font-semibold">Projects</h1>
-        <p className="opacity-80">Please <Link href="/login" className="text-indigo-300 underline">sign in</Link> to view your projects.</p>
+        <p className="opacity-80">
+          Please <Link href="/login" className="text-indigo-300 underline">sign in</Link> to view your projects.
+        </p>
       </main>
     )
   }
@@ -53,3 +55,4 @@ export default function Projects() {
     </main>
   )
 }
+
