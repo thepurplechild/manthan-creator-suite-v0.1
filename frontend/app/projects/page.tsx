@@ -1,26 +1,43 @@
 'use client'
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
+import { useAuth } from '../../components/auth'
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL
+// Use env, but fall back to your real backend URL (paste yours below)
+const BACKEND =
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  'https://<PASTE-YOUR-manthan-backend-URL>.a.run.app'
 
 type Project = { id: string; title: string; logline: string; genre?: string; tone?: string; creator_name?: string }
 
 export default function Projects() {
+  const { user } = useAuth()
   const [data, setData] = useState<Project[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
-    async function run() {
+    if (!user) return
+    ;(async () => {
       try {
         const res = await fetch(`${BACKEND}/api/projects`)
         if (!res.ok) throw new Error(await res.text())
         setData(await res.json())
-      } catch (e:any) {
+      } catch (e: any) {
         setErr(e.message || 'Failed to load projects')
       }
-    }
-    run()
-  }, [])
+    })()
+  }, [user])
+
+  if (!user) {
+    return (
+      <main className="space-y-6">
+        <h1 className="text-2xl font-semibold">Projects</h1>
+        <p className="opacity-80">
+          Please <Link href="/login" className="text-indigo-300 underline">sign in</Link> to view your projects.
+        </p>
+      </main>
+    )
+  }
 
   return (
     <main className="space-y-6">
