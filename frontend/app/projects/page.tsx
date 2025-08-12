@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useAuth } from '../../components/auth'
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://<YOUR-BACKEND>.a.run.app'
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://manthan-backend-524579286496.asia-south1.run.app'
 
 type Project = { id: string; title: string; logline: string; genre?: string; tone?: string; creator_name?: string }
 
