@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 64">
+  <defs>
+    <linearGradient id="mw" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4F46E5"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Mark -->
+  <circle cx="32" cy="32" r="28" fill="url(#mw)"/>
+  <path d="M14 44 V20 M14 20 L32 34 M50 44 V20 M50 20 L32 34"
+        stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- Word -->
+  <g fill="#E5E7EB" transform="translate(76,18)">
+    <text font-family="Sora, Inter, sans-serif" font-size="24" font-weight="600">Manthan</text>
+  </g>
+</svg>
