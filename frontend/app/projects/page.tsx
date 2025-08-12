@@ -3,9 +3,7 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useAuth } from '../../components/auth'
 
-const BACKEND =
-  process.env.NEXT_PUBLIC_BACKEND_URL ||
-  'https://<YOUR-manthan-backend-URL>.a.run.app'
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://<YOUR-BACKEND>.a.run.app'
 
 type Project = { id: string; title: string; logline: string; genre?: string; tone?: string; creator_name?: string }
 
@@ -34,9 +32,7 @@ export default function Projects() {
     return (
       <main className="space-y-6">
         <h1 className="text-2xl font-semibold">Projects</h1>
-        <p className="opacity-80">
-          Please <Link href="/login" className="text-indigo-300 underline">sign in</Link> to view your projects.
-        </p>
+        <p className="opacity-80">Please <Link href="/login" className="text-indigo-300 underline">sign in</Link> to view your projects.</p>
       </main>
     )
   }
@@ -47,7 +43,7 @@ export default function Projects() {
       {err && <p className="text-red-400">{err}</p>}
       <div className="grid md:grid-cols-2 gap-4">
         {data?.map(p => (
-          <div key={p.id} className="rounded-xl bg-neutral-900/60 p-4 border border-neutral-800">
+          <div key={p.id} className="card p-4">
             <h3 className="text-lg font-medium">{p.title}</h3>
             <p className="opacity-80 text-sm">{p.logline}</p>
             <p className="opacity-60 text-xs mt-2">{[p.genre, p.tone].filter(Boolean).join(' • ')}</p>
