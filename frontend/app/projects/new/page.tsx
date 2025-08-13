@@ -33,7 +33,8 @@ export default function NewProject() {
     e.preventDefault()
     setErr(null); setLoading(true)
     try {
-      const token = await user.getIdToken()
+      const token = await user.getIdToken(true) // force refresh
+
 
       // create project
       const res = await fetch(`${BACKEND}/api/projects`, {
