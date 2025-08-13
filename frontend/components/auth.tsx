@@ -5,9 +5,10 @@ import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signO
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN!,       // project-manthan-468609.firebaseapp.com
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,         // project-manthan-468609
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN!,  // project-manthan-468609.firebaseapp.com
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,    // project-manthan-468609
 }
+
 
 if (!firebaseConfig.apiKey || !firebaseConfig.authDomain || !firebaseConfig.projectId) {
   // Helpful console hint in case envs are missing in Cloud Run
