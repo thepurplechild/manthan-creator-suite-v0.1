@@ -6,14 +6,15 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install dependencies
-COPY requirements.txt /app/
-RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
+# Install deps
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# App code
-COPY app.py /app/
+# Copy app
+COPY . .
 
-# Cloud Run provides $PORT
+# Cloud Run sets PORT. Default to 8080 for local runs.
 ENV PORT=8080
-CMD ["sh","-c","uvicorn app:app --host 0.0.0.0 --port $PORT"]
 
+# Start the API server and listen on 0.0.0.0:$PORT
+CMD ["bash", "-lc", "exec uvicorn app:app --host 0.0.0.0 --port ${PORT}"]
