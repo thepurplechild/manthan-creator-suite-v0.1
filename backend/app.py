@@ -1,9 +1,12 @@
+# backend/app.py
+
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional
-import os, json, re, logging
+import os, json, re, logging, base64
 
+# --- GCP / Firebase ---
 from google.cloud import firestore
 import firebase_admin
 from firebase_admin import auth as fb_auth
@@ -15,44 +18,51 @@ try:
 except Exception:
     _openai_available = False
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5-mini")
-OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
+# ---------- Config / Env ----------
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
+ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
+
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5-mini")  # set to "gpt-5" if needed
+OPENAI_TEMPERATURE = float(os.environ.get("OPENAI_TEMPERATURE", "0.7"))
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("manthan-backend")
 
-app = FastAPI(title="Manthan Creator Suite API", version="0.3.1")
+app = FastAPI(title="Manthan Creator Suite API", version="0.4.0")
 
-# -------- CORS ----------
-ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "*")
+# ---------- CORS ----------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[ALLOWED_ORIGIN],
-    allow_credentials=False,
+    allow_credentials=False,  # we use Authorization header (no cookies)
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
-# -------- Firebase Admin (verify ID tokens) ----------
+# ---------- Firebase Admin (robust init) ----------
 if not firebase_admin._apps:
     try:
-        firebase_admin.initialize_app(options={"projectId": PROJECT_ID})
-        logging.info("Firebase Admin initialized (project=%s)", PROJECT_ID)
-    except Exception as e:
-        logging.exception("Firebase Admin init failed")
+        # Let ADC pick creds; pass projectId for clarity on Cloud Run
+        if PROJECT_ID:
+            firebase_admin.initialize_app(options={"projectId": PROJECT_ID})
+        else:
+            firebase_admin.initialize_app()
+        logger.info("Firebase Admin initialized (project=%s)", PROJECT_ID)
+    except Exception:
+        logger.exception("Firebase Admin init failed")
 
-# -------- Firestore (lazy) ----------
+# ---------- Firestore (lazy client so startup never crashes) ----------
 _db = None
+FIRESTORE_COLLECTION = os.environ.get("FIRESTORE_COLLECTION", "projects")
+
 def get_db():
     global _db
     if _db is None:
-        logging.info("Creating Firestore client (project=%s)", PROJECT_ID)
+        logger.info("Creating Firestore client (project=%s)", PROJECT_ID)
         _db = firestore.Client(project=PROJECT_ID) if PROJECT_ID else firestore.Client()
     return _db
 
-FIRESTORE_COLLECTION = os.environ.get("FIRESTORE_COLLECTION", "projects")
-
-# -------- Models ----------
+# ---------- Models ----------
 class ProjectIn(BaseModel):
     title: str = Field(..., min_length=2, max_length=120)
     logline: str = Field(..., min_length=5, max_length=400)
@@ -77,20 +87,34 @@ class PitchPack(BaseModel):
     beat_sheet: List[str]
     deck_outline: List[str]
 
-# -------- Helpers ----------
+# ---------- Helpers ----------
 def _doc_to_project(doc) -> Project:
     data = doc.to_dict()
     return Project(id=doc.id, **data)
+
+def _peek_claims(token: str):
+    """Decode JWT payload (no verification) to log aud/iss on failures."""
+    try:
+        payload_b64 = token.split(".")[1]
+        padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        return data.get("aud"), data.get("iss")
+    except Exception:
+        return None, None
 
 def get_uid(authorization: str = Header(None)) -> str:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     token = authorization.split(" ", 1)[1].strip()
     try:
-        decoded = fb_auth.verify_id_token(token)
+        decoded = fb_auth.verify_id_token(token)  # verifies signature, exp, aud, iss
         return decoded["uid"]
-    except Exception:
-        logging.exception("verify_id_token failed")
+    except Exception as e:
+        aud, iss = _peek_claims(token)
+        logger.error(
+            "verify_id_token failed: %s | PROJECT_ID=%s | aud=%s | iss=%s",
+            e, PROJECT_ID, aud, iss
+        )
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 def _parse_json_loose(text: str) -> Optional[dict]:
@@ -109,19 +133,20 @@ def _clamp_list(xs, n):
     return [str(x).strip() for x in xs][:n]
 
 def _generate_with_gpt5(title: str, logline: str, genre: str, tone: str) -> Optional[dict]:
+    """Use GPT-5/5mini if OPENAI_API_KEY present; return dict or None on any error."""
     if not _openai_available or not os.getenv("OPENAI_API_KEY"):
         return None
     try:
         client = OpenAI()
         system = (
             "You are the Packaging Agent for Project Manthan. "
-            "Write culturally authentic Indian film/series material. "
-            "Everything must be grounded in the given TITLE and LOGLINE; avoid boilerplate."
+            "Write culturally authentic Indian film/series material (Hindi/Tamil/Telugu). "
+            "Everything must be tightly grounded in the given TITLE and LOGLINE; avoid boilerplate."
         )
         instructions = (
             "Return ONLY valid JSON with keys: "
             "title, logline, synopsis (200-300 words), beat_sheet (10 items), deck_outline (8 items). "
-            "Each beat must logically pay off the logline; prefer Indian settings & tone."
+            "Each beat must logically pay off the precise premise in the logline; prefer Indian settings & tone."
         )
         payload = {"title": title, "logline": logline, "genre": genre or "Drama", "tone": tone or "Grounded"}
         resp = client.chat.completions.create(
@@ -145,15 +170,18 @@ def _generate_with_gpt5(title: str, logline: str, genre: str, tone: str) -> Opti
             return None
         return data
     except Exception:
-        logging.exception("GPT-5 generation failed")
+        logger.exception("GPT-5 generation failed")
         return None
 
-# -------- Events ----------
+# ---------- Lifecycle ----------
 @app.on_event("startup")
 def on_startup():
-    logging.info("App starting (project=%s, origin=%s)", PROJECT_ID, ALLOWED_ORIGIN)
+    logger.info(
+        "App starting | PROJECT_ID=%s | ALLOWED_ORIGIN=%s | OPENAI_MODEL=%s",
+        PROJECT_ID, ALLOWED_ORIGIN, OPENAI_MODEL
+    )
 
-# -------- Routes ----------
+# ---------- Routes ----------
 @app.get("/api/health")
 def health():
     return {"ok": True}
@@ -183,7 +211,10 @@ def generate_pitch(payload: PitchRequest, uid: str = Depends(get_uid)):
     genre = (payload.genre or "Drama").strip()
     tone  = (payload.tone  or "Grounded, character-driven").strip()
 
+    # Try GPT-5/5mini first
     data = _generate_with_gpt5(title, logline, genre, tone)
+
+    # Fallback (template) if key/model not present
     if not data:
         synopsis = (
             f"**{title}** is a {genre.lower()} told with a {tone.lower()} tone. "
@@ -196,7 +227,7 @@ def generate_pitch(payload: PitchRequest, uid: str = Depends(get_uid)):
             "Opening Image — show the world implied by the logline.",
             "Theme Stated — a line tied to the inner conflict.",
             "Catalyst — inciting event that activates the premise.",
-            "Debate — cost of engaging the premise.",
+            "Debate — the cost of engaging the premise.",
             "Break into Two — decisive step that embodies the premise.",
             "Midpoint — reversal/reveal that reframes stakes.",
             "Bad Guys Close In — pressure tied to the premise.",
@@ -205,7 +236,7 @@ def generate_pitch(payload: PitchRequest, uid: str = Depends(get_uid)):
             "Finale — specific payoff rooted in the logline.",
         ]
         deck_outline = [
-            "Cover: Title & logline (premise centered).",
+            "Cover: Title & logline (premise-centered).",
             "Overview: Why now (market/audience in India).",
             "World & Characters: 3–5 leads with premise-tied arcs.",
             "Story: 1-page synopsis referencing the logline.",
@@ -216,5 +247,6 @@ def generate_pitch(payload: PitchRequest, uid: str = Depends(get_uid)):
         ]
         data = {"title": title, "logline": logline, "synopsis": synopsis,
                 "beat_sheet": beat_sheet, "deck_outline": deck_outline}
+
     return PitchPack(**data)
 
