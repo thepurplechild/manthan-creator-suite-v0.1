@@ -5,6 +5,8 @@ from typing import List, Optional
 import os
 import json
 import re
+import logging
+
 
 from google.cloud import firestore
 import firebase_admin
@@ -27,10 +29,11 @@ ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "*")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[ALLOWED_ORIGIN],
-    allow_credentials=False,  # we use Authorization header (no cookies)
+    allow_credentials=False,  # we use Authorization header, not cookies
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
 
 # -------- Firestore ----------
 FIRESTORE_COLLECTION = os.environ.get("FIRESTORE_COLLECTION", "projects")
@@ -77,8 +80,9 @@ def get_uid(authorization: str = Header(None)) -> str:
     try:
         decoded = fb_auth.verify_id_token(token)  # verifies signature & expiry
         return decoded["uid"]
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    except Exception as e:
+    logging.exception("verify_id_token failed")
+    raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 def _parse_json_loose(text: str) -> Optional[dict]:
     """Accept JSON with or without code fences; try to recover first {...} block."""
