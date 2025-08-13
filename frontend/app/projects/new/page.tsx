@@ -5,7 +5,7 @@ import { useAuth } from '../../../components/auth'
 
 const BACKEND =
   process.env.NEXT_PUBLIC_BACKEND_URL ||
-  'https://<YOUR-manthan-backend-URL>.a.run.app'
+  'https://manthan-backend-524579286496.asia-south1.run.app'
 
 export default function NewProject() {
   const { user } = useAuth()
@@ -33,7 +33,9 @@ export default function NewProject() {
     e.preventDefault()
     setErr(null); setLoading(true)
     try {
-     const token = await getFreshIdToken()
+     const token = await user.getIdToken(true)  // not getIdToken() — the 'true' forces a fresh token
+fetch(`${BACKEND}/api/projects`, { headers: { Authorization: `Bearer ${token}` } })
+
 
 
 
