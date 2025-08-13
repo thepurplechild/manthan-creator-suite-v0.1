@@ -16,7 +16,9 @@ export default function Projects() {
     if (!user) return
     ;(async () => {
       try {
-       const token = await getFreshIdToken()
+      const token = await user.getIdToken(true)  // not getIdToken() — the 'true' forces a fresh token
+fetch(`${BACKEND}/api/projects`, { headers: { Authorization: `Bearer ${token}` } })
+
 
         const res = await fetch(`${BACKEND}/api/projects`, {
           headers: { Authorization: `Bearer ${token}` },
