@@ -1,26 +1,45 @@
 'use client'
-import Link from 'next/link'
 import { useState } from 'react'
+import Link from 'next/link'
 import { useAuth } from '../../../components/auth'
 
-const BACKEND =
-  process.env.NEXT_PUBLIC_BACKEND_URL ||
-  'https://manthan-backend-524579286496.asia-south1.run.app'
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL!
 
-export default function NewProject() {
+type PitchPack = {
+  title: string
+  logline: string
+  synopsis: string
+  beat_sheet: string[]
+  deck_outline: string[]
+}
+
+export default function NewProjectPage() {
   const { user } = useAuth()
+
   const [title, setTitle] = useState('')
   const [logline, setLogline] = useState('')
   const [genre, setGenre] = useState('')
   const [tone, setTone] = useState('')
-  const [creatorName, setCreatorName] = useState('')
-  const [pitch, setPitch] = useState<any>(null)
-  const [err, setErr] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+
+  const [saving, setSaving] = useState(false)
+  const [generating, setGenerating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [pitch, setPitch] = useState<PitchPack | null>(null)
+
+  if (!BACKEND) {
+    return (
+      <main className="max-w-4xl mx-auto px-6 py-8 space-y-4">
+        <h1 className="text-2xl font-semibold">New Project</h1>
+        <p className="text-red-400">
+          NEXT_PUBLIC_BACKEND_URL is not set on the frontend service.
+        </p>
+      </main>
+    )
+  }
 
   if (!user) {
     return (
-      <main className="space-y-6">
+      <main className="max-w-4xl mx-auto px-6 py-8 space-y-4">
         <h1 className="text-2xl font-semibold">New Project</h1>
         <p className="opacity-80">
           Please <Link href="/login" className="text-indigo-300 underline">sign in</Link> to create a project.
@@ -29,76 +48,164 @@ export default function NewProject() {
     )
   }
 
-  async function onSubmit(e: React.FormEvent) {
+  const onCreate = async (e: React.FormEvent) => {
     e.preventDefault()
-    setErr(null); setLoading(true)
+    setError(null)
+    setPitch(null)
     try {
-     const token = await user.getIdToken(true)  // not getIdToken() — the 'true' forces a fresh token
-fetch(`${BACKEND}/api/projects`, { headers: { Authorization: `Bearer ${token}` } })
-
-
-
-
-      // create project
+      setSaving(true)
+      const token = await user.getIdToken(true) // << force fresh token
       const res = await fetch(`${BACKEND}/api/projects`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ title, logline, genre, tone, creator_name: creatorName }),
+        body: JSON.stringify({
+          title,
+          logline,
+          genre: genre || undefined,
+          tone: tone || undefined,
+        }),
       })
       if (!res.ok) throw new Error(await res.text())
+    } catch (e: any) {
+      setError(e?.message || 'Failed to create project')
+      return
+    } finally {
+      setSaving(false)
+    }
 
-      // generate pitch-pack
-      const gen = await fetch(`${BACKEND}/api/pitch/generate`, {
+    // After saving, immediately generate a pitch pack
+    try {
+      setGenerating(true)
+      const token = await user.getIdToken(true) // << force fresh token (again)
+      const res = await fetch(`${BACKEND}/api/pitch/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ title, logline, genre, tone }),
+        body: JSON.stringify({
+          title,
+          logline,
+          genre: genre || undefined,
+          tone: tone || undefined,
+        }),
       })
-      if (!gen.ok) throw new Error(await gen.text())
-      const payload = await gen.json()
-      setPitch(payload)
+      if (!res.ok) throw new Error(await res.text())
+      const data = (await res.json()) as PitchPack
+      setPitch(data)
     } catch (e: any) {
-      setErr(e.message || 'Failed to create project')
+      setError(e?.message || 'Failed to generate pitch pack')
     } finally {
-      setLoading(false)
+      setGenerating(false)
     }
   }
 
   return (
-    <main className="space-y-8">
-      <h1 className="text-2xl font-semibold">New Project</h1>
-      <form onSubmit={onSubmit} className="grid gap-4 max-w-2xl">
-        <input className="px-4 py-3 rounded-xl bg-neutral-900 border border-neutral-800" placeholder="Title" value={title} onChange={e=>setTitle(e.target.value)} required />
-        <textarea className="px-4 py-3 rounded-xl bg-neutral-900 border border-neutral-800" placeholder="Logline" value={logline} onChange={e=>setLogline(e.target.value)} required rows={3} />
-        <div className="grid md:grid-cols-2 gap-4">
-          <input className="px-4 py-3 rounded-xl bg-neutral-900 border border-neutral-800" placeholder="Genre (e.g., Drama)" value={genre} onChange={e=>setGenre(e.target.value)} />
-          <input className="px-4 py-3 rounded-xl bg-neutral-900 border border-neutral-800" placeholder="Tone (e.g., grounded, darkly comic)" value={tone} onChange={e=>setTone(e.target.value)} />
+    <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">New Project</h1>
+        <Link href="/projects" className="px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700">
+          Back to Projects
+        </Link>
+      </div>
+
+      <form onSubmit={onCreate} className="grid gap-4 max-w-3xl">
+        <div>
+          <label className="block text-sm mb-1">Title</label>
+          <input
+            className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            required
+            minLength={2}
+            maxLength={120}
+            placeholder="e.g., Dhundh"
+          />
         </div>
-        <input className="px-4 py-3 rounded-xl bg-neutral-900 border border-neutral-800" placeholder="Creator name (optional)" value={creatorName} onChange={e=>setCreatorName(e.target.value)} />
-        <button disabled={loading} className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50">
-          {loading ? 'Creating…' : 'Create & Generate Pitch Pack'}
-        </button>
-        {err && <p className="text-red-400">{err}</p>}
+
+        <div>
+          <label className="block text-sm mb-1">Logline</label>
+          <textarea
+            className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800"
+            value={logline}
+            onChange={(e) => setLogline(e.target.value)}
+            required
+            minLength={5}
+            maxLength={400}
+            rows={3}
+            placeholder="One-sentence premise that the whole pitch will follow."
+          />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm mb-1">Genre (optional)</label>
+            <input
+              className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800"
+              value={genre}
+              onChange={(e) => setGenre(e.target.value)}
+              placeholder="Drama / Thriller / Comedy …"
+            />
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Tone (optional)</label>
+            <input
+              className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800"
+              value={tone}
+              onChange={(e) => setTone(e.target.value)}
+              placeholder="Grounded, character-driven …"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 pt-2">
+          <button
+            type="submit"
+            disabled={saving || generating}
+            className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 disabled:opacity-60"
+          >
+            {saving ? 'Saving…' : generating ? 'Generating…' : 'Create & Generate'}
+          </button>
+          {error && <span className="text-red-400">{error}</span>}
+        </div>
       </form>
 
       {pitch && (
-        <section className="rounded-2xl p-6 bg-neutral-900/60 border border-neutral-800">
-          <h2 className="text-xl font-medium mb-2">Pitch Pack</h2>
-          <h3 className="text-lg font-semibold">{pitch.title}</h3>
-          <p className="opacity-80 mt-1">{pitch.logline}</p>
-          <h4 className="mt-4 font-medium">Synopsis</h4>
-          <p className="opacity-90">{pitch.synopsis}</p>
-          <h4 className="mt-4 font-medium">Beat Sheet</h4>
-          <ol className="list-decimal ml-6 space-y-1">{pitch.beat_sheet?.map((b:string,i:number)=>(<li key={i}>{b}</li>))}</ol>
-          <h4 className="mt-4 font-medium">Deck Outline</h4>
-          <ul className="list-disc ml-6 space-y-1">{pitch.deck_outline?.map((b:string,i:number)=>(<li key={i}>{b}</li>))}</ul>
+        <section className="mt-6 max-w-3xl space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-medium">Pitch Pack</h2>
+          </div>
+          <div className="rounded-xl bg-neutral-900/60 border border-neutral-800 p-4 space-y-3">
+            <div>
+              <h3 className="text-lg font-semibold">{pitch.title}</h3>
+              <p className="opacity-80">{pitch.logline}</p>
+            </div>
+
+            <div>
+              <h4 className="font-medium mb-1">Synopsis</h4>
+              <p className="opacity-80 whitespace-pre-wrap">{pitch.synopsis}</p>
+            </div>
+
+            <div>
+              <h4 className="font-medium mb-1">Beat Sheet</h4>
+              <ol className="list-decimal pl-5 opacity-90 space-y-1">
+                {pitch.beat_sheet.map((b, i) => <li key={i}>{b}</li>)}
+              </ol>
+            </div>
+
+            <div>
+              <h4 className="font-medium mb-1">Deck Outline</h4>
+              <ul className="list-disc pl-5 opacity-90 space-y-1">
+                {pitch.deck_outline.map((b, i) => <li key={i}>{b}</li>)}
+              </ul>
+            </div>
+          </div>
         </section>
       )}
     </main>
   )
 }
+
