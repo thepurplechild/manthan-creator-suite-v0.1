@@ -1,8 +1,15 @@
 fastapi==0.115.0
-uvicorn[standard]==0.30.6
-pydantic==2.8.2
-google-cloud-firestore==2.16.0
-python-dotenv==1.0.1
-firebase-admin==6.5.0
-openai>=1.40.0
 
+pydantic==2.8.2
+
+python-dotenv==1.0.1
+
+
+
+uvicorn[standard]==0.30.6
+
+google-cloud-firestore==2.16.0
+firebase-admin==6.5.0
+
+openai>=1.40.0            # for gpt-5 / gpt-5-mini calls
+reportlab==4.2.0          # if you added the PDF export endpoint
