@@ -1,0 +1,37 @@
+# cloudbuild-backend.yaml  (place at repo root)
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _REGION: asia-south1
+  _REPO: manthan-repo
+  _SERVICE: manthan-backend
+  _ALLOWED_ORIGIN: https://manthan-frontend-524579286496.asia-south1.run.app
+
+steps:
+- name: gcr.io/cloud-builders/docker
+  args:
+    - build
+    - -f
+    - backend/Dockerfile
+    - -t
+    - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+    - .
+- name: gcr.io/cloud-builders/docker
+  args:
+    - push
+    - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+- name: gcr.io/google.com/cloudsdktool/cloud-sdk
+  entrypoint: gcloud
+  args:
+    - run
+    - deploy
+    - ${_SERVICE}
+    - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+    - --region=${_REGION}
+    - --platform=managed
+    - --allow-unauthenticated
+    - --port=8080
+    - --set-env-vars=GOOGLE_CLOUD_PROJECT=$PROJECT_ID,ALLOWED_ORIGIN=${_ALLOWED_ORIGIN}
+images:
+- ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
