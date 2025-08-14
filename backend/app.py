@@ -1,5 +1,5 @@
 # backend/app.py
-
+from app_stages import router as stages_router
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -28,7 +28,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("manthan-backend")
 
 app = FastAPI(title="Manthan Creator Suite API", version="0.4.1")
-
+app.include_router(stages_router)
 # ---------- CORS ----------
 app.add_middleware(
     CORSMiddleware,
