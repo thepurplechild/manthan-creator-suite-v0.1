@@ -1,13 +1,14 @@
 'use client'
-import { useEffect, useMemo, useState } from 'react'
+export const dynamic = 'force-dynamic'
+
+import { useEffect, useMemo, useState, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useAuth } from '../../../../components/auth'
 
-
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL!
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || ''
 type Candidate = { id: string; text: string; meta?: any }
 
-export default function OutlinesPage() {
+function OutlinesInner() {
   const { user } = useAuth()
   const router = useRouter()
   const sp = useSearchParams()
@@ -21,7 +22,7 @@ export default function OutlinesPage() {
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string|null>(null)
 
-  const canGo = useMemo(() => pid && user, [pid, user])
+  const canGo = useMemo(() => Boolean(pid && user), [pid, user])
 
   const generate = async () => {
     if (!canGo) return
@@ -44,7 +45,7 @@ export default function OutlinesPage() {
     }
   }
 
-  useEffect(() => { generate() }, []) // first load
+  useEffect(() => { generate() }, [])
 
   const choose = async (id: string) => {
     try {
@@ -96,5 +97,13 @@ export default function OutlinesPage() {
         {err && <p className="text-red-400">{err}</p>}
       </div>
     </main>
+  )
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<div className="p-6">Loading…</div>}>
+      <OutlinesInner />
+    </Suspense>
   )
 }
