@@ -4,7 +4,7 @@ from __future__ import annotations
 import os, uuid, time
 from typing import List, Optional, Literal, Dict, Any
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -23,15 +23,32 @@ except Exception:
 
 import httpx
 
+# -----------------------------------------------------------
+# App
+# -----------------------------------------------------------
+app = FastAPI(title="Manthan Creator Suite API", version="0.5.0")
 
-app = FastAPI(title="Manthan Creator Suite API", version="0.4.0")
-
+# Health
 @app.get("/health")
-def health():
+def health_root():
     return {"status": "ok"}
 
-# -------------------------- CORS --------------------------
-ALLOWED_ORIGINS = ["https://manthan-frontend-524579286496.asia-south1.run.app"]
+@app.get("/api/health")
+def health_api():
+    return {"ok": True, "ts": int(time.time())}
+
+# -----------------------------------------------------------
+# CORS (allow your frontend; allow localhost for dev)
+# -----------------------------------------------------------
+DEFAULT_ALLOWED = [
+    "https://manthan-frontend-524579286496.asia-south1.run.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+ALLOWED_ORIGINS = [
+    o.strip() for o in (os.getenv("ALLOWED_ORIGINS") or "").split(",") if o.strip()
+] or DEFAULT_ALLOWED
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -40,7 +57,9 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
-# ---------------------- Firebase/Firestore ----------------
+# -----------------------------------------------------------
+# Firebase / Firestore
+# -----------------------------------------------------------
 if not firebase_admin._apps:
     firebase_admin.initialize_app(
         options={"projectId": os.getenv("GOOGLE_CLOUD_PROJECT")}
@@ -49,8 +68,44 @@ if not firebase_admin._apps:
 FIRESTORE_COLLECTION = os.getenv("FIRESTORE_COLLECTION", "projects")
 db = firestore.Client()
 
+# -----------------------------------------------------------
+# Auth toggle (dev-friendly): set ENFORCE_AUTH=true in prod
+# -----------------------------------------------------------
+ENFORCE_AUTH = (os.getenv("ENFORCE_AUTH", "false").lower() == "true")
+DEV_UID = os.getenv("DEV_UID", "dev-user")
 
-# ---------------------- OpenAI Helpers --------------------
+_UNPROTECTED_PATHS = {"/", "/health", "/api/health", "/openapi.json", "/docs", "/docs/oauth2-redirect"}
+
+def _require_or_fake_uid(authorization_header: Optional[str]) -> str:
+    """
+    - If ENFORCE_AUTH=false (default), return a stable fake UID so Firestore works.
+    - If true, verify Firebase ID token from Authorization: Bearer <token>.
+    """
+    if not ENFORCE_AUTH:
+        return DEV_UID
+
+    if not authorization_header or not authorization_header.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+
+    token = authorization_header.split(" ", 1)[1].strip()
+    try:
+        decoded = fb_auth.verify_id_token(token)
+        return decoded["uid"]
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+def get_uid(
+    request: Request,
+    authorization: str = Header(None, convert_underscores=False)
+) -> str:
+    # Always allow unprotected paths (docs/health)
+    if request.url.path in _UNPROTECTED_PATHS:
+        return DEV_UID if not ENFORCE_AUTH else "anonymous"
+    return _require_or_fake_uid(authorization)
+
+# -----------------------------------------------------------
+# OpenAI helpers
+# -----------------------------------------------------------
 def make_openai_client() -> Optional[OpenAI]:
     """
     Construct an OpenAI client with timeouts/retries.
@@ -72,11 +127,10 @@ def make_openai_client() -> Optional[OpenAI]:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI client init failed: {type(e).__name__}: {e}")
 
-
 ENGINE_MAP = {
-    "gpt-5-mini":  os.getenv("MANTHAN_GPT5_MINI",  "gpt-4o-mini"),
-    "gpt-5":       os.getenv("MANTHAN_GPT5",       "gpt-4.1"),
-    "manthan-lora":os.getenv("MANTHAN_LORA_MODEL","gpt-4o-mini"),
+    "gpt-5-mini":   os.getenv("MANTHAN_GPT5_MINI",  "gpt-4o-mini"),
+    "gpt-5":        os.getenv("MANTHAN_GPT5",       "gpt-4.1"),
+    "manthan-lora": os.getenv("MANTHAN_LORA_MODEL","gpt-4o-mini"),
 }
 
 def _model_for_engine(engine: str) -> str:
@@ -114,8 +168,9 @@ def _call_llm(engine: str, system: str, user: str, n: int = 3) -> List[str]:
 
     return texts
 
-
-# -------------------------- Models ------------------------
+# -----------------------------------------------------------
+# Models
+# -----------------------------------------------------------
 class ProjectIn(BaseModel):
     title: str = Field(..., min_length=2, max_length=120)
     logline: str = Field(..., min_length=5, max_length=400)
@@ -163,21 +218,12 @@ class StageChooseRequest(BaseModel):
     chosen_id: str
     edits: Optional[str] = ""
 
-
-# ------------------------- Helpers ------------------------
+# -----------------------------------------------------------
+# Helper functions
+# -----------------------------------------------------------
 def _doc_to_project(doc) -> Project:
     data = doc.to_dict()
     return Project(id=doc.id, **data)
-
-def get_uid(authorization: str = Header(None)) -> str:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Missing Bearer token")
-    token = authorization.split(" ", 1)[1].strip()
-    try:
-        decoded = fb_auth.verify_id_token(token)
-        return decoded["uid"]
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 def _get_project_for_owner(project_id: str, uid: str) -> Project:
     doc = db.collection(FIRESTORE_COLLECTION).document(project_id).get()
@@ -235,12 +281,9 @@ def _user_prompt(stage: StageName, p: Project, tweak: str) -> str:
     lines.append(extras[stage])
     return "\n".join(lines)
 
-
-# -------------------------- Routes ------------------------
-@app.get("/api/health")
-def health():
-    return {"ok": True, "ts": int(time.time())}
-
+# -----------------------------------------------------------
+# Routes
+# -----------------------------------------------------------
 @app.get("/api/projects", response_model=List[Project])
 def list_projects(uid: str = Depends(get_uid)):
     docs = (
@@ -259,7 +302,6 @@ def create_project(payload: ProjectIn, uid: str = Depends(get_uid)):
     ref.set(data)
     return Project(id=ref.id, **data)
 
-# --- Simple pitch endpoint (kept for compatibility)
 @app.post("/api/pitch/generate", response_model=PitchPack)
 def generate_pitch(payload: PitchRequest, uid: str = Depends(get_uid)):
     title = payload.title.strip()
@@ -301,7 +343,6 @@ def generate_pitch(payload: PitchRequest, uid: str = Depends(get_uid)):
         synopsis=synopsis, beat_sheet=beat_sheet, deck_outline=deck_outline
     )
 
-# --- Stage: generate 3 candidates
 @app.post("/api/stage/generate", response_model=StageGenerateResponse)
 def stage_generate(body: StageGenerateRequest, uid: str = Depends(get_uid)):
     p = _get_project_for_owner(body.project_id, uid)
@@ -309,7 +350,6 @@ def stage_generate(body: StageGenerateRequest, uid: str = Depends(get_uid)):
     sys_prompt = _system_prompt(body.stage, body.language or "en")
     usr_prompt = _user_prompt(body.stage, p, body.tweak or "")
 
-    # Extra flavor when using the LoRA lane
     if body.engine == "manthan-lora":
         usr_prompt += (
             "\nFEW-SHOT STYLE SIGNALS:\n"
@@ -332,7 +372,6 @@ def stage_generate(body: StageGenerateRequest, uid: str = Depends(get_uid)):
     )
     return StageGenerateResponse(candidates=cands)
 
-# --- Stage: choose one (optionally with edits)
 @app.post("/api/stage/choose")
 def stage_choose(body: StageChooseRequest, uid: str = Depends(get_uid)):
     _ = _get_project_for_owner(body.project_id, uid)
@@ -361,19 +400,19 @@ def stage_choose(body: StageChooseRequest, uid: str = Depends(get_uid)):
     )
     return {"ok": True, "stage": body.stage, "chosen_id": body.chosen_id}
 
-# ------------------------ Debug ---------------------------
+# -----------------------------------------------------------
+# Debug
+# -----------------------------------------------------------
 @app.get("/api/debug/whoami")
 def debug_whoami(uid: str = Depends(get_uid)):
     return {
+        "uid": uid,
         "project": os.getenv("GOOGLE_CLOUD_PROJECT"),
-        "allowed_origin": os.getenv("ALLOWED_ORIGIN"),
-        "engine_map": {
-            "mini": os.getenv("MANTHAN_GPT5_MINI"),
-            "full": os.getenv("MANTHAN_GPT5"),
-            "lora": os.getenv("MANTHAN_LORA_MODEL"),
-        },
+        "allowed_origins": ALLOWED_ORIGINS,
+        "engine_map": ENGINE_MAP,
         "has_key": bool(os.getenv("OPENAI_API_KEY")),
         "base_url": os.getenv("OPENAI_BASE_URL") or None,
+        "enforce_auth": ENFORCE_AUTH,
     }
 
 @app.get("/api/debug/openai-ping")
@@ -390,4 +429,5 @@ def debug_openai_ping(uid: str = Depends(get_uid)):
         return {"status": r.status_code, "ok": r.is_success, "body_snippet": r.text[:200]}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Outbound probe failed: {type(e).__name__}: {e}")
+
 
