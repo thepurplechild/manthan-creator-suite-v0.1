@@ -1,15 +1,19 @@
+# backend/app.py
+from __future__ import annotations
+
+import os, uuid, time
+from typing import List, Optional, Literal, Dict, Any
+
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Optional, Literal, Dict, Any
-import os, uuid, time
 
-# Firebase + Firestore
+# Firestore + Firebase
 from google.cloud import firestore
 import firebase_admin
 from firebase_admin import auth as fb_auth
 
-# OpenAI (or compatible) for LLM generation
+# LLM client
 _OPENAI_READY = False
 try:
     from openai import OpenAI
@@ -17,53 +21,97 @@ try:
 except Exception:
     _OPENAI_READY = False
 
+import httpx
 
-app = FastAPI(title="Manthan Creator Suite API", version="0.3.0")
 
-# ---------------- CORS ----------------
-ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "*")
+app = FastAPI(title="Manthan Creator Suite API", version="0.4.0")
+
+# -------------------------- CORS --------------------------
+ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN") or "*"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[ALLOWED_ORIGIN],
+    allow_origins=[ALLOWED_ORIGIN] if ALLOWED_ORIGIN != "*" else ["*"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
-# ---------------- Firestore ----------------
-FIRESTORE_COLLECTION = os.environ.get("FIRESTORE_COLLECTION", "projects")
-db = firestore.Client()
-
-# ---------------- Firebase Admin ----------------
+# ---------------------- Firebase/Firestore ----------------
 if not firebase_admin._apps:
     firebase_admin.initialize_app(
-        options={"projectId": os.environ.get("GOOGLE_CLOUD_PROJECT")}
+        options={"projectId": os.getenv("GOOGLE_CLOUD_PROJECT")}
     )
 
-# ---------------- OpenAI Client ----------------
+FIRESTORE_COLLECTION = os.getenv("FIRESTORE_COLLECTION", "projects")
+db = firestore.Client()
+
+
+# ---------------------- OpenAI Helpers --------------------
 def make_openai_client() -> Optional[OpenAI]:
     """
-    Creates an OpenAI client. Supports custom base URLs for compatible providers.
+    Construct an OpenAI client with timeouts/retries.
+    Supports OPENAI_BASE_URL for compatible providers.
     """
     if not _OPENAI_READY:
         return None
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None
-    base_url = os.getenv("OPENAI_BASE_URL")  # optional (e.g. Azure/Fireworks compatible)
-    if base_url:
-        return OpenAI(api_key=api_key, base_url=base_url)
-    return OpenAI(api_key=api_key)
+    base_url = os.getenv("OPENAI_BASE_URL") or None
+    try:
+        return OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=60.0,
+            max_retries=2,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OpenAI client init failed: {type(e).__name__}: {e}")
 
-# Engines your UI sends; map to actual deployable models if needed
+
 ENGINE_MAP = {
-    "gpt-5-mini": os.getenv("MANTHAN_GPT5_MINI", "gpt-4o-mini"),  # fallback that exists
-    "gpt-5":      os.getenv("MANTHAN_GPT5", "gpt-4.1"),
-    # "LoRA" lane: if you have a hosted finetuned / lora model, put its id in env
-    "manthan-lora": os.getenv("MANTHAN_LORA_MODEL", "gpt-4o-mini"),  # fallback
+    "gpt-5-mini":  os.getenv("MANTHAN_GPT5_MINI",  "gpt-4o-mini"),
+    "gpt-5":       os.getenv("MANTHAN_GPT5",       "gpt-4.1"),
+    "manthan-lora":os.getenv("MANTHAN_LORA_MODEL","gpt-4o-mini"),
 }
 
-# ---------------- Models ----------------
+def _model_for_engine(engine: str) -> str:
+    return ENGINE_MAP.get(engine, ENGINE_MAP["gpt-5-mini"])
+
+def _call_llm(engine: str, system: str, user: str, n: int = 3) -> List[str]:
+    """
+    Generate n candidates using chat completions (looping for provider compatibility).
+    """
+    client = make_openai_client()
+    if not client:
+        raise HTTPException(status_code=500, detail="LLM not configured (OPENAI_API_KEY missing or OpenAI SDK unavailable)")
+
+    model = _model_for_engine(engine)
+    texts: List[str] = []
+    last_err: Optional[str] = None
+
+    for _ in range(n):
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.8,
+            )
+            content = (resp.choices[0].message.content or "").strip()
+            texts.append(content if content else "(empty)")
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+
+    if not texts or any(t == "(empty)" for t in texts):
+        raise HTTPException(status_code=502, detail=f"LLM generation failed: {last_err or 'empty output'}")
+
+    return texts
+
+
+# -------------------------- Models ------------------------
 class ProjectIn(BaseModel):
     title: str = Field(..., min_length=2, max_length=120)
     logline: str = Field(..., min_length=5, max_length=400)
@@ -88,7 +136,6 @@ class PitchPack(BaseModel):
     beat_sheet: List[str]
     deck_outline: List[str]
 
-# Stage flow
 StageName = Literal["outline", "onepager", "screenplay", "script", "dialogue"]
 
 class StageGenerateRequest(BaseModel):
@@ -112,7 +159,8 @@ class StageChooseRequest(BaseModel):
     chosen_id: str
     edits: Optional[str] = ""
 
-# ---------------- Helpers ----------------
+
+# ------------------------- Helpers ------------------------
 def _doc_to_project(doc) -> Project:
     data = doc.to_dict()
     return Project(id=doc.id, **data)
@@ -137,96 +185,54 @@ def _get_project_for_owner(project_id: str, uid: str) -> Project:
     return p
 
 def _stage_ref(project_id: str, stage: str):
-    return db.collection(FIRESTORE_COLLECTION).document(project_id).collection("stages").document(stage)
+    return (
+        db.collection(FIRESTORE_COLLECTION)
+        .document(project_id)
+        .collection("stages")
+        .document(stage)
+    )
 
-# -------- Prompt templates (short, stage-specific) --------
 def _system_prompt(stage: StageName, language: str) -> str:
     base = (
         "You are Manthan, a professional film/series development assistant. "
-        "Write in the requested language. Be specific, cinematic, and market-aware. "
-        "Avoid placeholders. Use concrete details and character-driven logic."
+        "Be concrete, cinematic, market-aware. Avoid placeholders. "
+        "Reflect the premise throughout."
     )
-    if language != "en":
+    if language and language != "en":
         base += f" Respond in language code: {language}."
     stage_note = {
         "outline":   "Produce a tight outline with acts and clear turning points.",
-        "onepager":  "Produce a compelling 1-page synopsis suitable for a pitch.",
-        "screenplay":"Produce scene beats (bulleted). Each beat is a crisp, visual moment.",
-        "script":    "Produce formatted script pages (concise) for a selected segment.",
-        "dialogue":  "Produce dialogue passes with distinct voice and cultural texture.",
+        "onepager":  "Write a compelling one-page synopsis for pitching.",
+        "screenplay":"Write crisp scene beats (bulleted, visual).",
+        "script":    "Write properly formatted script pages for a selected segment.",
+        "dialogue":  "Write dialogue passes with distinct voice and cultural texture.",
     }[stage]
     return base + " " + stage_note
 
 def _user_prompt(stage: StageName, p: Project, tweak: str) -> str:
-    # EVERYTHING real flows from title/logline/genre/tone; no placeholders allowed
     lines = [
         f"TITLE: {p.title}",
         f"LOGLINE: {p.logline}",
         f"GENRE: {p.genre or 'Drama'}",
         f"TONE: {p.tone or 'Grounded, character-driven'}",
         "INSTRUCTIONS:",
-        "- Reflect the logline in every beat/paragraph.",
-        "- Use culturally specific detail (names, settings, objects) appropriate to the premise.",
-        "- Keep it production-ready, no vagueness.",
+        "- Use culturally specific details; avoid generic phrasing.",
+        "- Keep it production-ready.",
     ]
     if tweak:
         lines.append(f"STEERING_NOTE: {tweak}")
-    # Stage-specific extra constraints
     extras = {
-        "outline":  "- 10-12 bullets, clearly labeled act/beat, each 1-2 lines.",
-        "onepager": "- 4-6 paragraphs max. No subheads. Strong arc + hook.",
-        "screenplay": "- 10-14 beats for a pilot/feature section. Pure beats, not prose.",
-        "script":   "- 1-2 pages of properly formatted script text (INT./EXT., action, dialogue).",
-        "dialogue": "- 2-3 pages equivalent of dialogue-centered exchanges; crisp, characterful.",
+        "outline":   "- 10–12 labeled beats across acts; 1–2 lines each.",
+        "onepager":  "- 4–6 paragraphs; strong arc and hook; no headings.",
+        "screenplay":"- 10–14 beats; each is a visual moment, not prose.",
+        "script":    "- 1–2 pages of formatted script (INT/EXT, action, dialogue).",
+        "dialogue":  "- 2–3 pages equivalent; crisp, characterful exchanges.",
     }
     lines.append(extras[stage])
     return "\n".join(lines)
 
-def _model_for_engine(engine: str) -> str:
-    # Map UI engine to deployable model
-    return ENGINE_MAP.get(engine, ENGINE_MAP["gpt-5-mini"])
 
-def _call_llm(engine: str, system: str, user: str, n: int = 3) -> List[str]:
-    """
-    Calls the model and returns n candidate texts. Falls back if a model string is invalid.
-    """
-    client = make_openai_client()
-    if not client:
-        # If no key/client, fail loudly so you don't see placeholders
-        raise HTTPException(status_code=500, detail="LLM not configured (OPENAI_API_KEY missing or OpenAI SDK unavailable)")
-
-    model = _model_for_engine(engine)
-
-    # Try to generate n candidates in separate calls (simple & robust)
-    texts: List[str] = []
-    last_err: Optional[str] = None
-    for _ in range(n):
-        try:
-            resp = client.responses.create(
-                model=model,
-                input=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            )
-            # Standardize: first text output chunk
-            out = ""
-            for item in resp.output:
-                if item.type == "message":
-                    for cc in item.message.content:
-                        if cc.type == "output_text":
-                            out += cc.text
-            texts.append(out.strip() or "(empty)")
-        except Exception as e:
-            last_err = str(e)
-
-    if not texts or any(t == "(empty)" for t in texts):
-        # If responses failed or were empty, surface the sdk error if any
-        raise HTTPException(status_code=502, detail=f"LLM generation failed: {last_err or 'empty output'}")
-
-    return texts
-
-# ---------------- Routes ----------------
+# -------------------------- Routes ------------------------
 @app.get("/api/health")
 def health():
     return {"ok": True, "ts": int(time.time())}
@@ -249,55 +255,49 @@ def create_project(payload: ProjectIn, uid: str = Depends(get_uid)):
     ref.set(data)
     return Project(id=ref.id, **data)
 
-# ---- Existing simple pitch endpoint (kept) ----
+# --- Simple pitch endpoint (kept for compatibility)
 @app.post("/api/pitch/generate", response_model=PitchPack)
 def generate_pitch(payload: PitchRequest, uid: str = Depends(get_uid)):
     title = payload.title.strip()
     logline = payload.logline.strip()
     genre = (payload.genre or "Drama").strip()
-    tone = (payload.tone or "Grounded, character-driven").strip()
+    tone  = (payload.tone  or "Grounded, character-driven").strip()
 
     synopsis = (
         f"**{title}** is a {genre.lower()} told with a {tone.lower()} tone. "
         f"It centers on the premise: {logline} "
-        "In Act I, we meet the protagonist at a point of quiet crisis; in Act II, "
-        "a bold decision reroutes their life; Act III delivers a surprising yet inevitable resolution."
+        "Act I introduces a quiet crisis; Act II forces a bold decision; "
+        "Act III lands a surprising yet inevitable resolution."
     )
-
     beat_sheet = [
-        "Opening Image — a snapshot of the protagonist’s everyday contradiction",
+        "Opening Image — everyday contradiction of the protagonist",
         "Theme Stated — a line that foreshadows the inner journey",
-        "Catalyst — an event that upends the status quo",
+        "Catalyst — the event that upends the status quo",
         "Debate — resist or leap?",
         "Break into Two — commitment to a new path",
         "Midpoint — stakes and truth sharpen",
         "Bad Guys Close In — pressure mounts",
-        "All Is Lost — confrontation with the core fear",
-        "Break into Three — integrating lesson + new plan",
+        "All Is Lost — face the core fear",
+        "Break into Three — integrate lesson + new plan",
         "Finale — decisive action and transformation",
         "Final Image — mirror of the opening, now evolved",
     ]
-
     deck_outline = [
         "Cover: Title, logline, key art placeholder",
         "Overview: Why now? Audience? Tone & genre anchors",
-        "World & Characters: 3-5 leads with concise arcs",
+        "World & Characters: 3–5 leads with concise arcs",
         "Story: 1-page synopsis + 10-beat board",
         "Lookbook: Visual references (mood, palette, comps)",
         "Market: Comps, potential buyers, format & runtime",
-        "Team: Creator bio, past credits, attachments (if any)",
-        "Next Steps: What we need (budget, partners, timeline)",
+        "Team: Creator bio, key attachments",
+        "Next Steps: Budget, partners, timeline",
     ]
-
     return PitchPack(
-        title=title,
-        logline=logline,
-        synopsis=synopsis,
-        beat_sheet=beat_sheet,
-        deck_outline=deck_outline,
+        title=title, logline=logline,
+        synopsis=synopsis, beat_sheet=beat_sheet, deck_outline=deck_outline
     )
 
-# ---- New: Stage generation (3 candidates) ----
+# --- Stage: generate 3 candidates
 @app.post("/api/stage/generate", response_model=StageGenerateResponse)
 def stage_generate(body: StageGenerateRequest, uid: str = Depends(get_uid)):
     p = _get_project_for_owner(body.project_id, uid)
@@ -305,57 +305,85 @@ def stage_generate(body: StageGenerateRequest, uid: str = Depends(get_uid)):
     sys_prompt = _system_prompt(body.stage, body.language or "en")
     usr_prompt = _user_prompt(body.stage, p, body.tweak or "")
 
-    # For "manthan-lora" you can inject style primers / fewshots here
+    # Extra flavor when using the LoRA lane
     if body.engine == "manthan-lora":
         usr_prompt += (
             "\nFEW-SHOT STYLE SIGNALS:\n"
-            "- Lean into Indian subcontinent texture, modern vernacular.\n"
-            "- Show character choice under pressure; avoid generic phrasing.\n"
+            "- Lean into Indian subcontinent texture and vernacular.\n"
+            "- Keep choices under pressure; avoid generic phrasing.\n"
         )
 
     outs = _call_llm(body.engine, sys_prompt, usr_prompt, n=3)
+    cands = [Candidate(id=str(uuid.uuid4()), text=t, meta={"engine": body.engine}) for t in outs]
 
-    cands = [
-        Candidate(id=str(uuid.uuid4()), text=t, meta={"engine": body.engine})
-        for t in outs
-    ]
-
-    # Persist last generation for the stage
-    _stage_ref(body.project_id, body.stage).set({
-        "last_generated": [c.dict() for c in cands],
-        "engine": body.engine,
-        "language": body.language or "en",
-        "updated_at": firestore.SERVER_TIMESTAMP,
-        "tweak": body.tweak or "",
-    }, merge=True)
-
+    _stage_ref(body.project_id, body.stage).set(
+        {
+            "last_generated": [c.dict() for c in cands],
+            "engine": body.engine,
+            "language": body.language or "en",
+            "tweak": body.tweak or "",
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        },
+        merge=True,
+    )
     return StageGenerateResponse(candidates=cands)
 
-# ---- New: Stage choose (store selected, optional edits) ----
+# --- Stage: choose one (optionally with edits)
 @app.post("/api/stage/choose")
 def stage_choose(body: StageChooseRequest, uid: str = Depends(get_uid)):
     _ = _get_project_for_owner(body.project_id, uid)
-    sref = _stage_ref(body.project_id, body.stage).get()
-    if not sref.exists:
+    snap = _stage_ref(body.project_id, body.stage).get()
+    if not snap.exists:
         raise HTTPException(status_code=400, detail="Nothing generated for this stage yet")
 
-    data = sref.to_dict() or {}
+    data = snap.to_dict() or {}
     cands = data.get("last_generated", [])
     chosen = next((c for c in cands if c.get("id") == body.chosen_id), None)
     if not chosen:
         raise HTTPException(status_code=404, detail="Chosen candidate not found")
 
-    chosen_text = chosen.get("text", "")
-    if body.edits:
-        chosen_text = body.edits.strip()
+    chosen_text = body.edits.strip() if body.edits else (chosen.get("text") or "")
 
-    _stage_ref(body.project_id, body.stage).set({
-        "chosen": {
-            "id": body.chosen_id,
-            "text": chosen_text,
-            "meta": chosen.get("meta", {}),
+    _stage_ref(body.project_id, body.stage).set(
+        {
+            "chosen": {
+                "id": body.chosen_id,
+                "text": chosen_text,
+                "meta": chosen.get("meta", {}),
+            },
+            "updated_at": firestore.SERVER_TIMESTAMP,
         },
-        "updated_at": firestore.SERVER_TIMESTAMP,
-    }, merge=True)
-
+        merge=True,
+    )
     return {"ok": True, "stage": body.stage, "chosen_id": body.chosen_id}
+
+# ------------------------ Debug ---------------------------
+@app.get("/api/debug/whoami")
+def debug_whoami(uid: str = Depends(get_uid)):
+    return {
+        "project": os.getenv("GOOGLE_CLOUD_PROJECT"),
+        "allowed_origin": os.getenv("ALLOWED_ORIGIN"),
+        "engine_map": {
+            "mini": os.getenv("MANTHAN_GPT5_MINI"),
+            "full": os.getenv("MANTHAN_GPT5"),
+            "lora": os.getenv("MANTHAN_LORA_MODEL"),
+        },
+        "has_key": bool(os.getenv("OPENAI_API_KEY")),
+        "base_url": os.getenv("OPENAI_BASE_URL") or None,
+    }
+
+@app.get("/api/debug/openai-ping")
+def debug_openai_ping(uid: str = Depends(get_uid)):
+    key = os.getenv("OPENAI_API_KEY")
+    if not key:
+        raise HTTPException(status_code=500, detail="No OPENAI_API_KEY env")
+    try:
+        r = httpx.get(
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=20.0,
+        )
+        return {"status": r.status_code, "ok": r.is_success, "body_snippet": r.text[:200]}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Outbound probe failed: {type(e).__name__}: {e}")
+
