@@ -1,26 +1,33 @@
 'use client'
 export const dynamic = 'force-dynamic'
 
-import { useEffect, useMemo, useState, Suspense } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useAuth } from '../../../../components/auth'
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || ''
 type Candidate = { id: string; text: string; meta?: any }
 
-function DialogueInner() {
+export default function Page() {
   const { user } = useAuth()
   const router = useRouter()
-  const sp = useSearchParams()
-  const pid = sp.get('pid') || ''
-  const engine = sp.get('engine') || 'gpt-5-mini'
-  const lang = sp.get('lang') || 'en'
+
+  const [pid, setPid] = useState('')
+  const [engine, setEngine] = useState('gpt-5-mini')
+  const [lang, setLang] = useState('en')
 
   const [tweak, setTweak] = useState('')
   const [cands, setCands] = useState<Candidate[]|null>(null)
   const [edits, setEdits] = useState<Record<string,string>>({})
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string|null>(null)
+
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search)
+    setPid(qs.get('pid') || '')
+    setEngine(qs.get('engine') || 'gpt-5-mini')
+    setLang(qs.get('lang') || 'en')
+  }, [])
 
   const canGo = useMemo(() => Boolean(pid && user), [pid, user])
 
@@ -45,7 +52,7 @@ function DialogueInner() {
     }
   }
 
-  useEffect(() => { generate() }, [])
+  useEffect(() => { generate() }, [canGo])
 
   const choose = async (id: string) => {
     try {
@@ -55,7 +62,7 @@ function DialogueInner() {
         headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
         body: JSON.stringify({ project_id: pid, stage: 'dialogue', chosen_id: id, edits: edits[id] || '' })
       })
-    if (!res.ok) throw new Error(await res.text())
+      if (!res.ok) throw new Error(await res.text())
       router.push(`/projects`)
     } catch (e:any) {
       setErr(e.message || 'Failed to choose dialogue pass')
@@ -94,13 +101,5 @@ function DialogueInner() {
         {err && <p className="text-red-400">{err}</p>}
       </div>
     </main>
-  )
-}
-
-export default function Page() {
-  return (
-    <Suspense fallback={<div className="p-6">Loading…</div>}>
-      <DialogueInner />
-    </Suspense>
   )
 }
