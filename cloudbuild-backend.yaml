@@ -1,4 +1,4 @@
-# cloudbuild-backend.yaml  (place at repo root)
+# cloudbuild-backend.yaml
 options:
   logging: CLOUD_LOGGING_ONLY
 
@@ -8,30 +8,61 @@ substitutions:
   _SERVICE: manthan-backend
   _ALLOWED_ORIGIN: https://manthan-frontend-524579286496.asia-south1.run.app
 
+  # Model mappings (change to your actual deployed model IDs any time)
+  _MANTHAN_GPT5_MINI: gpt-4o-mini
+  _MANTHAN_GPT5: gpt-4.1
+  _MANTHAN_LORA_MODEL: gpt-4o-mini
+
+  # Leave blank unless you use a compatible endpoint (Azure/Fireworks/etc.)
+  _OPENAI_BASE_URL: ""
+
 steps:
+# Build backend image
 - name: gcr.io/cloud-builders/docker
   args:
-    - build
-    - -f
-    - backend/Dockerfile
-    - -t
-    - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
-    - .
+    [
+      "build",
+      "-f","backend/Dockerfile",
+      "-t","${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA",
+      "."
+    ]
+
+# Push image
 - name: gcr.io/cloud-builders/docker
   args:
-    - push
-    - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+    [
+      "push",
+      "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA"
+    ]
+
+# Deploy to Cloud Run (inject secrets + env vars)
 - name: gcr.io/google.com/cloudsdktool/cloud-sdk
   entrypoint: gcloud
   args:
-    - run
-    - deploy
-    - ${_SERVICE}
-    - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
-    - --region=${_REGION}
-    - --platform=managed
-    - --allow-unauthenticated
-    - --port=8080
-    - --set-env-vars=GOOGLE_CLOUD_PROJECT=$PROJECT_ID,ALLOWED_ORIGIN=${_ALLOWED_ORIGIN}
+    [
+      "run","deploy","${_SERVICE}",
+      "--image","${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA",
+      "--region","${_REGION}",
+      "--platform","managed",
+      "--allow-unauthenticated",
+      "--port","8080",
+
+      # Secret from Secret Manager (requires Secret Accessor on the runtime SA)
+      "--set-secrets","OPENAI_API_KEY=OPENAI_API_KEY:latest",
+
+      # Core env vars (CORS + project + model mappings + optional custom base URL)
+      "--update-env-vars","GOOGLE_CLOUD_PROJECT=$PROJECT_ID",
+      "--update-env-vars","ALLOWED_ORIGIN=${_ALLOWED_ORIGIN}",
+      "--update-env-vars","MANTHAN_GPT5_MINI=${_MANTHAN_GPT5_MINI},MANTHAN_GPT5=${_MANTHAN_GPT5},MANTHAN_LORA_MODEL=${_MANTHAN_LORA_MODEL}",
+      "--update-env-vars","OPENAI_BASE_URL=${_OPENAI_BASE_URL}",
+
+      # (Optional but sensible runtime knobs)
+      "--memory","1Gi",
+      "--cpu","1",
+      "--concurrency","16",
+      "--timeout","600"
+    ]
+
 images:
-- ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+- ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$SHORT_SHA
+
