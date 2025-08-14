@@ -9,6 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app
 
 WORKDIR /app
+COPY backend/ /app/
 
 # Minimal OS deps (certs for HTTPS, curl for debugging)
 RUN apt-get update && apt-get install -y --no-install-recommends \
