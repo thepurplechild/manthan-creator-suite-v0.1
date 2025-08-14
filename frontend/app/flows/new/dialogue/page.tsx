@@ -1,13 +1,14 @@
 'use client'
-import { useEffect, useMemo, useState } from 'react'
+export const dynamic = 'force-dynamic'
+
+import { useEffect, useMemo, useState, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useAuth } from '../../../../components/auth'
 
-
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL!
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || ''
 type Candidate = { id: string; text: string; meta?: any }
 
-export default function DialoguePage() {
+function DialogueInner() {
   const { user } = useAuth()
   const router = useRouter()
   const sp = useSearchParams()
@@ -21,7 +22,7 @@ export default function DialoguePage() {
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string|null>(null)
 
-  const canGo = useMemo(() => pid && user, [pid, user])
+  const canGo = useMemo(() => Boolean(pid && user), [pid, user])
 
   const generate = async () => {
     if (!canGo) return
@@ -54,8 +55,7 @@ export default function DialoguePage() {
         headers:{ 'Content-Type':'application/json', Authorization:`Bearer ${token}` },
         body: JSON.stringify({ project_id: pid, stage: 'dialogue', chosen_id: id, edits: edits[id] || '' })
       })
-      if (!res.ok) throw new Error(await res.text())
-      // Final step – take user back to project or a summary page
+    if (!res.ok) throw new Error(await res.text())
       router.push(`/projects`)
     } catch (e:any) {
       setErr(e.message || 'Failed to choose dialogue pass')
@@ -94,5 +94,13 @@ export default function DialoguePage() {
         {err && <p className="text-red-400">{err}</p>}
       </div>
     </main>
+  )
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<div className="p-6">Loading…</div>}>
+      <DialogueInner />
+    </Suspense>
   )
 }
