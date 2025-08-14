@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { useAuth } from '../../../components/auth'
+import { useAuth } from '../../../../components/auth'
+
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL!
 type Candidate = { id: string; text: string; meta?: any }
