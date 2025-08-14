@@ -1,14 +1,13 @@
 # backend/app_stages.py
+from typing import List, Optional, Literal, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional, Literal, Dict, Any
 
-# IMPORTANT: absolute import (no leading dot)
-from app import get_uid, get_db  # reuse your auth and Firestore from app.py
+from app import get_uid, get_db  # absolute import
 
 router = APIRouter(prefix="/api/stage", tags=["stages"])
 
-Stage = Literal["outline","onepager","screenplay","script","dialogue"]
+Stage = Literal["outline", "onepager", "screenplay", "script", "dialogue"]
 
 class Candidate(BaseModel):
     id: str
@@ -19,7 +18,7 @@ class StageGenIn(BaseModel):
     project_id: str
     stage: Stage
     tweak: Optional[str] = None
-    engine: Optional[str] = None
+    engine: Optional[str] = None  # "gpt-5" | "gpt-5-mini" | "manthan-lora"
 
 class StageGenOut(BaseModel):
     candidates: List[Candidate]
@@ -55,12 +54,17 @@ def choose_stage(payload: ChooseIn, uid: str = Depends(get_uid)):
     if not snap.exists or snap.to_dict().get("owner_uid") != uid:
         raise HTTPException(404, "Project not found")
 
+    # Advance stage (simple linear flow)
     next_stage_map = {
-        "outline": "onepager", "onepager": "screenplay", "screenplay": "script",
-        "script": "dialogue", "dialogue": "final"
+        "outline": "onepager",
+        "onepager": "screenplay",
+        "screenplay": "script",
+        "script": "dialogue",
+        "dialogue": "final",
     }
     if payload.stage in next_stage_map:
         doc_ref.update({"stage": next_stage_map[payload.stage]})
+    # You can store revision documents here as well
 
     return {"ok": True, "next": next_stage_map.get(payload.stage, "final")}
 
