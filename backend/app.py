@@ -26,14 +26,18 @@ import httpx
 
 app = FastAPI(title="Manthan Creator Suite API", version="0.4.0")
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
 # -------------------------- CORS --------------------------
-ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN") or "*"
+ALLOWED_ORIGINS = ["https://manthan-frontend-524579286496.asia-south1.run.app"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[ALLOWED_ORIGIN] if ALLOWED_ORIGIN != "*" else ["*"],
-    allow_credentials=False,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # ---------------------- Firebase/Firestore ----------------
