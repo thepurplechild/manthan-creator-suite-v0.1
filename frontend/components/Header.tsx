@@ -30,7 +30,7 @@ export function Header() {
         </Link>
         <nav className="flex items-center gap-1">
           <NavLink href="/projects">Projects</NavLink>
-          <NavLink href="/projects/new">New</NavLink>
+          <NavLink href="/flows/new/idea">New</NavLink>
           {!user ? (
             <Link href="/login" className="btn btn-primary ml-2">Sign in</Link>
           ) : (
