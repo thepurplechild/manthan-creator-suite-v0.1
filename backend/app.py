@@ -1,4 +1,5 @@
 # backend/app.py
+from app import get_uid, get_db
 from app_stages import router as stages_router
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
