@@ -1,14 +1,14 @@
 'use client'
 export const dynamic = 'force-dynamic'
 
-import { useState, Suspense } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '../../../../components/auth'
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || ''
 
-function IdeaInner() {
+export default function Page() {
   const { user } = useAuth()
   const router = useRouter()
 
@@ -41,8 +41,8 @@ function IdeaInner() {
       })
       if (!res.ok) throw new Error(await res.text())
       const proj = await res.json()
-      // carry engine + language via query params (until persisted)
-      router.push(`/flows/new/outlines?pid=${encodeURIComponent(proj.id)}&engine=${engine}&lang=${language}`)
+      const qs = new URLSearchParams({ pid: proj.id, engine, lang: language })
+      router.push(`/flows/new/outlines?${qs.toString()}`)
     } catch (e:any) {
       setErr(e.message || 'Failed to create project')
     } finally {
@@ -80,12 +80,9 @@ function IdeaInner() {
             <label className="block text-sm mb-1">Language</label>
             <select className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800"
                     value={language} onChange={e=>setLanguage(e.target.value as any)}>
-              <option value="en">English</option>
-              <option value="hi">Hindi</option>
-              <option value="ta">Tamil</option>
-              <option value="te">Telugu</option>
-              <option value="bn">Bengali</option>
-              <option value="mr">Marathi</option>
+              <option value="en">English</option><option value="hi">Hindi</option>
+              <option value="ta">Tamil</option><option value="te">Telugu</option>
+              <option value="bn">Bengali</option><option value="mr">Marathi</option>
             </select>
           </div>
           <div>
@@ -107,13 +104,5 @@ function IdeaInner() {
         </div>
       </form>
     </main>
-  )
-}
-
-export default function Page() {
-  return (
-    <Suspense fallback={<div className="p-6">Loading…</div>}>
-      <IdeaInner />
-    </Suspense>
   )
 }
