@@ -1,0 +1,25 @@
+# infra/cloudbuild-frontend.yaml
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _REGION: asia-south1
+  _REPO: manthan-repo
+  _SERVICE: manthan-frontend
+
+steps:
+- name: gcr.io/buildpacks/builder
+  entrypoint: bash
+  args:
+    - -lc
+    - |
+      pack build ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA         --builder gcr.io/buildpacks/builder:latest         --path frontend
+
+- name: gcr.io/cloud-builders/docker
+  args: ["push", "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA"]
+
+- name: gcr.io/google.com/cloudsdktool/cloud-sdk
+  entrypoint: gcloud
+  args: ["run","deploy","${_SERVICE}",
+         "--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA",
+         "--region=${_REGION}","--platform=managed","--allow-unauthenticated","--port=8080"]
